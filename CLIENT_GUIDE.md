@@ -53,7 +53,7 @@ App opens at **http://localhost:3000**
 sudo apt update && sudo apt install -y python3 python3-pip ffmpeg nodejs npm
 
 # Clone repo
-git clone https://github.com/YOUR_USERNAME/song-video-agent.git
+git clone https://github.com/meris01/song-video-agent.git
 cd song-video-agent
 
 # Install
