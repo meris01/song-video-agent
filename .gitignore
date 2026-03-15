@@ -1,0 +1,39 @@
+.env
+.env.local
+.env.production
+.mcp.json
+.venv/
+venv/
+__pycache__/
+*.pyc
+artifacts/
+temp/
+videos/
+*.mp4
+*.mp3
+*.wav
+*.faiss
+*.pkl
+
+# Dependencies
+node_modules/
+
+# Settings (contains API keys!)
+webapp/settings.json
+
+# Uploads and rendered videos
+webapp/uploads/
+
+# Build output
+webapp/frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
