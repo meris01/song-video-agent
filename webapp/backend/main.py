@@ -925,35 +925,73 @@ def generate_captions(req: CaptionRequest):
         raise HTTPException(400, "Gemini API key not configured.")
     try:
         from google import genai
+        from google.genai import types as genai_types
+        import base64
         client = genai.Client(api_key=api_key)
         sb = _get_supabase()
+
+        # Fetch song metadata + file path
         try:
-            song = sb.table("songs").select("filename, bpm, mood, pacing, ai_analysis").eq("id", req.song_id).execute()
+            song = sb.table("songs").select("filename, storage_path, bpm, mood, pacing, ai_analysis").eq("id", req.song_id).execute()
         except:
-            song = sb.table("songs").select("filename, bpm, mood, pacing").eq("id", req.song_id).execute()
+            song = sb.table("songs").select("filename, storage_path, bpm, mood, pacing").eq("id", req.song_id).execute()
+        # Fetch video metadata + file path
         try:
-            video = sb.table("videos").select("filename, mood_tags, energy_level, pacing, ai_analysis, ai_description").eq("id", req.video_id).execute()
+            video = sb.table("videos").select("filename, local_path, mood_tags, energy_level, pacing, ai_analysis, ai_description").eq("id", req.video_id).execute()
         except:
-            video = sb.table("videos").select("filename, mood_tags, energy_level, pacing").eq("id", req.video_id).execute()
+            video = sb.table("videos").select("filename, local_path, mood_tags, energy_level, pacing").eq("id", req.video_id).execute()
+
         song_info = song.data[0] if song.data else {}
         video_info = video.data[0] if video.data else {}
         song_ai = song_info.get("ai_analysis") or {}
         video_ai = video_info.get("ai_analysis") or {}
 
-        prompt = f"""Generate 5 POV-style caption overlays for a TikTok/Instagram music video.
+        # Build multimodal content parts: video file + song file + text prompt
+        content_parts = []
 
-SONG: Mood={song_ai.get('mood', song_info.get('mood','?'))}, Energy={song_ai.get('energy','?')}, Genre={song_ai.get('genre','?')}, Vibe={song_ai.get('emotional_arc','?')}
-VIDEO: {video_ai.get('description', video_info.get('ai_description','?'))}, Setting={video_ai.get('setting','?')}, Elements={video_ai.get('visual_elements',[])}
-Style: {req.style}
+        # Load video file for visual analysis
+        video_path = Path(video_info.get("local_path", ""))
+        if video_path.exists():
+            video_bytes = video_path.read_bytes()
+            suffix = video_path.suffix.lower()
+            video_mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/mp4"}.get(suffix, "video/mp4")
+            content_parts.append(genai_types.Part.from_bytes(data=video_bytes, mime_type=video_mime))
+
+        # Load song file for audio analysis
+        song_path = Path(song_info.get("storage_path", ""))
+        if song_path.exists():
+            song_bytes = song_path.read_bytes()
+            suffix = song_path.suffix.lower()
+            song_mime = {".mp3": "audio/mp3", ".wav": "audio/wav", ".m4a": "audio/mp4",
+                         ".ogg": "audio/ogg", ".flac": "audio/flac", ".aac": "audio/aac"}.get(suffix, "audio/mp3")
+            content_parts.append(genai_types.Part.from_bytes(data=song_bytes, mime_type=song_mime))
+
+        # Build context from metadata as supplementary info
+        meta_context = ""
+        if song_ai:
+            meta_context += f"\nSong metadata: Mood={song_ai.get('mood', song_info.get('mood','?'))}, Energy={song_ai.get('energy','?')}, Genre={song_ai.get('genre','?')}, Vibe={song_ai.get('emotional_arc','?')}"
+        if video_ai:
+            meta_context += f"\nVideo metadata: {video_ai.get('description', video_info.get('ai_description','?'))}, Setting={video_ai.get('setting','?')}, Elements={video_ai.get('visual_elements',[])}"
+
+        prompt = f"""Watch this video and listen to this song carefully. Then generate 5 POV-style caption overlays for a TikTok/Instagram music video that combines them.
+
+Analyze:
+1. The video's visual content — what scenes, actions, settings, colors, and mood you see
+2. The song's audio — its tempo, mood, energy, genre, and emotional feel
+3. How the video and song complement each other — find the emotional connection
+{meta_context}
+
+Caption style: {req.style}
 
 Return JSON array of 5 objects:
-- "caption": POV/aesthetic caption with emojis (e.g. "pov: you finally found your peace 😌✨")
-- "keyword": 2-3 word scene keyword (e.g. "girl driving")
+- "caption": POV/aesthetic caption with emojis that captures the combined vibe of what you see AND hear (e.g. "pov: you finally found your peace 😌✨")
+- "keyword": 2-3 word scene keyword describing what's in the video (e.g. "girl driving")
 - "cta": call-to-action (e.g. "listen now on Spotify!")
 
-Rules: trendy, aesthetic, emojis, match the combined vibe. Return ONLY valid JSON array."""
+Rules: trendy, aesthetic, emojis, captions must reflect BOTH what's happening in the video AND the feeling of the song. Return ONLY valid JSON array."""
 
-        response = client.models.generate_content(model="gemini-2.5-flash", contents=[prompt])
+        content_parts.append(prompt)
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=content_parts)
         text = response.text.strip()
         if text.startswith("```"):
             text = text.split("```")[1]
